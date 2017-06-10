@@ -32,23 +32,61 @@ function getOnCall({scheduleID, pagerdutyToken}) {
       Authorization: `Token token=${ pagerdutyToken }`,
     },
     json: true
-  }).then(out => out.users[0].name);
+  }).then(out => {
+    return {
+      onCallName: out.users[0].name,
+      onCallEmail: out.users[0].email,
+    };
+  });
 }
 
 function updateOnCall(options) {
-  const {channelID, intervalMS, pagerduty, slack} = options;
+  const {channelID, intervalMS, pagerduty, slack, status} = options;
   function repeat() {
     setTimeout(() => updateOnCall(options), intervalMS);
   }
   getOnCall(pagerduty)
-    .then(onCallName => {
-      return ensureSlackTopic(
-        {onCallName, channelID, slackToken: slack.slackToken});
+    .then(({onCallName, onCallEmail}) => {
+      return ensureSlackTopic({onCallName, channelID, slackToken: slack.slackToken})
+        .then(() => ensureSlackStatuses({onCallEmail, status, slackToken: slack.slackToken}));
     })
     .then(repeat)
     .catch(err => {
       console.error("Error in updateOnCall iteration", err);
       repeat();
+    });
+}
+
+function ensureSlackStatuses({onCallEmail, status, slackToken}) {
+  if (!status) {
+    return Promise.resolve(null);
+  }
+  function setProfile({id, emoji, text}) {
+    return promisify(slack.users.profile.set)({
+      token: slackToken,
+      profile: JSON.stringify({status_emoji: emoji, status_text: text}),
+      user: id,
+    });
+  }
+  return promisify(slack.users.list)({token: slackToken})
+    .then(({members}) => {
+      var promises = [];
+      members.forEach(({id, profile}) => {
+        // Is this one of the users we care about?
+        if (!status.users[id]) {
+          return;
+        }
+        const isOnCall = status.users[id] === onCallEmail;
+        if (isOnCall && (profile.status_emoji !== status.emoji ||
+                         profile.status_text !== status.text)) {
+          promises.push(
+            setProfile({id, emoji: status.emoji, text: status.text}));
+        } else if (!isOnCall && profile.status_emoji === status.emoji
+                   && profile.status_text === status.text) {
+          promises.push(setProfile({id, emoji: '', text: ''}));
+        }
+      });
+      return Promise.all(promises);
     });
 }
 
