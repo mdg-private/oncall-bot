@@ -14,8 +14,10 @@ check(Meteor.settings, Match.ObjectIncluding({
   },
   slack: {
     channelName: String,
-    slackToken: String
+    slackToken: String,
+    slackAdminToken: String,
   },
+  statusUsers: Match.Optional(Object),
   intervalMS: Number
 }));
 
@@ -41,14 +43,19 @@ function getOnCall({scheduleID, pagerdutyToken}) {
 }
 
 function updateOnCall(options) {
-  const {channelID, intervalMS, pagerduty, slack, status} = options;
+  const {channelID, intervalMS, pagerduty, slack, statusUsers} = options;
   function repeat() {
     setTimeout(() => updateOnCall(options), intervalMS);
   }
   getOnCall(pagerduty)
     .then(({onCallName, onCallEmail}) => {
       return ensureSlackTopic({onCallName, channelID, slackToken: slack.slackToken})
-        .then(() => ensureSlackStatuses({onCallEmail, status, slackToken: slack.slackToken}));
+        .then(() => ensureSlackStatuses({
+          onCallEmail,
+          statusUsers,
+          slackToken: slack.slackToken,
+          slackAdminToken: slack.slackAdminToken,
+        }));
     })
     .then(repeat)
     .catch(err => {
@@ -57,8 +64,12 @@ function updateOnCall(options) {
     });
 }
 
-function ensureSlackStatuses({onCallEmail, status, slackToken}) {
-  if (!status) {
+const STATUS_EMOJI = ':pagerduty:';
+const STATUS_TEXT = 'On call!';
+
+function ensureSlackStatuses({onCallEmail, statusUsers, slackToken,
+                              slackAdminToken}) {
+  if (!statusUsers) {
     return Promise.resolve(null);
   }
   function setProfile({id, emoji, text}) {
@@ -73,17 +84,31 @@ function ensureSlackStatuses({onCallEmail, status, slackToken}) {
       var promises = [];
       members.forEach(({id, profile}) => {
         // Is this one of the users we care about?
-        if (!status.users[id]) {
+        if (!statusUsers[id]) {
           return;
         }
-        const isOnCall = status.users[id] === onCallEmail;
-        if (isOnCall && (profile.status_emoji !== status.emoji ||
-                         profile.status_text !== status.text)) {
+        const isOnCall = statusUsers[id] === onCallEmail;
+        if (isOnCall && (profile.status_emoji !== STATUS_EMOJI ||
+                         !profile.status_text.startsWith(STATUS_TEXT))) {
+          // On call!  Set their status, perhaps saving their current status at
+          // the end of the status text.
+          let text = STATUS_TEXT;
+          if (profile.status_emoji !== '' || profile.status_text != '') {
+            text = `${text} ${profile.status_emoji} ${profile.status_text}`;
+          }
           promises.push(
-            setProfile({id, emoji: status.emoji, text: status.text}));
-        } else if (!isOnCall && profile.status_emoji === status.emoji
-                   && profile.status_text === status.text) {
-          promises.push(setProfile({id, emoji: '', text: ''}));
+            setProfile({id, emoji: STATUS_EMOJI, text}));
+        } else if (!isOnCall && profile.status_emoji === STATUS_EMOJI
+                   && profile.status_text.startsWith(STATUS_TEXT)) {
+          const rest = profile.status_text.substr(STATUS_TEXT.length);
+          const m = rest.match(/^ (:[^:\s]+:) (.*)$/);
+          if (m) {
+            // We found an old status at the end.
+            promises.push(setProfile({id, emoji: m[1], text: m[2]}));
+          } else {
+            // Just un-set the status.
+            promises.push(setProfile({id, emoji: '', text: ''}));
+          }
         }
       });
       return Promise.all(promises);

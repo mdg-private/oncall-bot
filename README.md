@@ -11,15 +11,12 @@ Create a settings.json file like:
   },
   "slack": {
     "channelName": "galaxy-alerts",
-    "slackToken": "TOKEN"
+    "slackToken": "TOKEN1",
+    "slackAdminToken": "TOKEN2"
   },
   "intervalMS": 30000,
-  "status": {
-    "text": "On call (set automatically)",
-    "emoji": ":pagerduty:",
-    "users": {
-      "U02FWGZ19": "glasser@meteor.com"
-    }
+  "statusUsers": {
+    "U02FWGZ19": "glasser@meteor.com"
   },
 }
 ```
@@ -34,20 +31,23 @@ Create a settings.json file like:
     something like https://meteorjs.pagerduty.com/schedules#PTJS3I9
     Copy the final bit (`PTJS3I9`) to the pagerduty.scheduleID settings field
 - In Slack
-  - You must be a team admin in order to set the status of other users!
   - Register an app at https://api.slack.com/apps
   - Select Permissions and add:
     - `channels:read`
     - `channels:write`
     - `users:read`
-    - `users.profile:write`
   - Click "Install App To Team" and select the appropriate team
   - This provides an Access Token. Copy it into the slack.slackToken settings field
+  - Now get a Slack team admin to follow the same steps, but with only the
+    permission `users.profile:write`. Put its Access Token into
+    slack.slackAdminToken. This is used to set the status emoji and text for
+    arbitrary users.
 
 Users listed (by Slack ID) in the status section will have their status text and
-emoji set as configured when they are on call, and cleared (to empty --- there's
-no state) if they are not on call any more and their status matches the one that
-the bot sets.
+emoji set as configured when they are on call, and cleared if they are not on
+call any more and their status starts with 'On call!'.  (If they already have a
+status, it is appended to the 'On call!' status text along with its emoji, and
+restored when they go off call.)
 
 The simplest way to find a Slack ID is to run users.list via
 the [Slack API tester](https://api.slack.com/methods/users.list/test) and find
