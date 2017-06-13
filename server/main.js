@@ -75,7 +75,7 @@ function ensureSlackStatuses({onCallEmail, statusUsers, slackToken,
   function setProfile({id, emoji, text}) {
     console.log(`Setting status for ${id} to ${emoji} ${text}`);
     return promisify(slack.users.profile.set)({
-      token: slackToken,
+      token: slackAdminToken,
       profile: JSON.stringify({status_emoji: emoji, status_text: text}),
       user: id,
     });
