@@ -240,6 +240,8 @@ function ensureSlackTopic({onCalls, channel, slackToken}) {
         const delimiter = topic.indexOf(TOPIC_DELIMITER_EMOJI);
         if (delimiter !== -1) {
           prefix = topic.substr(0, delimiter).trimEnd() + ' ';
+        } else if (topic.trimEnd() !== '') {
+          prefix = topic.trimEnd() + ' ';
         }
       }
       let newTopic = `${prefix}${TOPIC_DELIMITER_EMOJI} ${pattern}`;
