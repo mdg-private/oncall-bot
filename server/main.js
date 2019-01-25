@@ -25,7 +25,8 @@ check(Meteor.settings, Match.ObjectIncluding({
     }],
     slackToken: String,
     slackAdminToken: String,
-    users: Object
+    users: Object,
+    combinedUserGroupHandle: Match.Optional(String),
   },
   intervalMS: Number
 }));
@@ -90,6 +91,7 @@ function updateOnCall(options) {
         onCalls,
         slackUserGroupIDsByHandle,
         slackToken: slack.slackToken,
+        combinedUserGroupHandle: slack.combinedUserGroupHandle,
       }));
     })
     .then(repeat)
@@ -103,8 +105,14 @@ const STATUS_EMOJI = ':pagerduty:';
 const STATUS_TEXT = 'On call!';
 const TOPIC_DELIMITER_EMOJI = ':pagerduty:';
 
-function ensureSlackUserGroups({onCalls, slackUserGroupIDsByHandle, slackToken}) {
-  return Promise.all(onCalls.map(({slackUserGroupHandle, onCallName, onCallSlackUserID}) => {
+function ensureSlackUserGroups({onCalls, slackUserGroupIDsByHandle, slackToken, combinedUserGroupHandle}) {
+  if (combinedUserGroupHandle) {
+    onCalls = [...onCalls, {
+      slackUserGroupHandle: combinedUserGroupHandle,
+      onCallSlackUserID: onCalls.map(({onCallSlackUserID}) => onCallSlackUserID).filter(x => x).sort().join(','),
+    }];
+  }
+  return Promise.all(onCalls.map(({slackUserGroupHandle, onCallSlackUserID}) => {
     if (!slackUserGroupHandle || !onCallSlackUserID) {
       return;
     }
@@ -117,8 +125,8 @@ function ensureSlackUserGroups({onCalls, slackUserGroupIDsByHandle, slackToken})
       token: slackToken,
       usergroup: slackUserGroupID,
     }).then(({users}) => {
-      if (users.length !== 1 || users[0] !== onCallSlackUserID) {
-        console.log(`Updating usergroup ${slackUserGroupHandle} to ${onCallName}`);
+      if (users.join(',') !== onCallSlackUserID) {
+        console.log(`Updating usergroup ${slackUserGroupHandle} to ${onCallSlackUserID}`);
         return promisify(slack.usergroups.users.update)({
           token: slackToken,
           usergroup: slackUserGroupID,
@@ -264,7 +272,8 @@ determineSlackChannelIDsOrDie(Meteor.settings.slack)
   .then(channels =>
     determineSlackUserGroupIDsOrDie(
       Meteor.settings.slack.slackToken,
-      Meteor.settings.pagerduty.schedules.map(
-        ({slackUserGroupHandle}) => slackUserGroupHandle).filter(x => x)
+      [Meteor.settings.slack.combinedUserGroupHandle,
+       ...Meteor.settings.pagerduty.schedules.map(
+        ({slackUserGroupHandle}) => slackUserGroupHandle)].filter(x => x),
     ).then(slackUserGroupIDsByHandle =>
            updateOnCall({channels, slackUserGroupIDsByHandle, ...Meteor.settings})));

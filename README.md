@@ -27,8 +27,9 @@ Create a settings.json file like:
     "slackToken": "TOKEN1",
     "slackAdminToken": "TOKEN2",
     "users": {
-      "glasser@meteor.com": U02FWGZ19"
-    }
+      "glasser@meteor.com": "U02FWGZ19"
+    },
+    "combinedUserGroupHandle": "oncall"
   },
   "intervalMS": 30000
 }
