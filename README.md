@@ -6,12 +6,23 @@ Create a settings.json file like:
 ```
 {
   "pagerduty": {
-    "primaryScheduleID": "ID",
-    "secondaryScheduleID": "ID",
+    "schedules": [{
+      "label": "Primary",
+      "id": "ID"
+    }, {
+      "label": "Secondary",
+      "id": "ID"
+    }],
     "pagerdutyToken": "TOKEN"
   },
   "slack": {
-    "channelNames": ["engine-alerts", "engine-alerts-discuss"],
+    "channels": [{
+      "name": "engine-alerts",
+      "pattern": "P: @(Primary), S: @(Secondary)"
+    }, {
+      "name": "engine-alerts-discuss",
+      "pattern": "P: @(Primary), S: @(Secondary)"
+    }],
     "slackToken": "TOKEN1",
     "slackAdminToken": "TOKEN2"
   },
@@ -30,7 +41,7 @@ Create a settings.json file like:
   - Copy the token value into the pagerduty.pagerdutyToken settings field
   - Navigate to the page for the schedule(s) you want to monitor. Its URL is
     something like https://meteorjs.pagerduty.com/schedules#PTJS3I9
-    Copy the final bit (`PTJS3I9`) to the pagerduty.${level}ScheduleID settings field
+    Copy the final bit (`PTJS3I9`) to the pagerduty.schdules.id settings fields
 - In Slack
   - Register an app at https://api.slack.com/apps
   - Select Permissions and add:
