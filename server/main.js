@@ -7,13 +7,17 @@ import slack from 'slack';
 
 var lastOnCallName = null;
 
+console.log('settings', Meteor.settings);
+
 check(Meteor.settings, Match.ObjectIncluding({
   pagerduty: {
     scheduleID: String,
+    primaryScheduleID: String,
+    secondaryScheduleID: String,
     pagerdutyToken: String,
   },
   slack: {
-    channelName: String,
+    channelNames: [String],
     slackToken: String,
     slackAdminToken: String,
   },
@@ -21,7 +25,7 @@ check(Meteor.settings, Match.ObjectIncluding({
   intervalMS: Number
 }));
 
-function getOnCall({scheduleID, pagerdutyToken}) {
+function getOnCall(scheduleID, pagerdutyToken, primary) {
   const now = moment();
   return requestPromise({
     uri: `https://api.pagerduty.com/schedules/${ scheduleID }/users`,
@@ -36,6 +40,7 @@ function getOnCall({scheduleID, pagerdutyToken}) {
     json: true
   }).then(out => {
     return {
+      primary,
       onCallName: out.users[0].name,
       onCallEmail: out.users[0].email,
     };
@@ -47,28 +52,41 @@ function updateOnCall(options) {
   function repeat() {
     setTimeout(() => updateOnCall(options), intervalMS);
   }
-  getOnCall(pagerduty)
+  getOnCall(pagerduty.primaryScheduleID, pagerduty.pagerdutyToken)
     .then(({onCallName, onCallEmail}) => {
-      return ensureSlackTopic({onCallName, channelID, slackToken: slack.slackToken})
+      getOnCall(pagerduty.secondaryScheduleID, pagerduty.pagerdutyToken, {onCallName, onCallEmail})
+      .then(({primary, onCallName, onCallEmail}) => {
+        const primaryOnCallName = primary.onCallName;
+        const primaryOnCallEmail = primary.onCallEmail;
+        console.log(`primary: ${primaryOnCallName}, secondary: ${onCallName}`);
+        return ensureSlackTopic({
+          primaryOnCallName,
+          secondaryOnCallName: onCallName,
+          channelID,
+          slackToken: slack.slackToken})
         .then(() => ensureSlackStatuses({
-          onCallEmail,
+          primaryOnCallEmail,
+          secondaryOnCallEmail: onCallEmail,
           statusUsers,
           slackToken: slack.slackToken,
           slackAdminToken: slack.slackAdminToken,
         }));
-    })
+      })
     .then(repeat)
     .catch(err => {
       console.error("Error in updateOnCall iteration", err);
       repeat();
     });
+  })
 }
 
 const STATUS_EMOJI = ':pagerduty:';
 const STATUS_TEXT = 'On call!';
 
-function ensureSlackStatuses({onCallEmail, statusUsers, slackToken,
-                              slackAdminToken}) {
+function ensureSlackStatuses(
+  {primaryOnCallEmail, secondaryOnCallEmail, statusUsers, slackToken,slackAdminToken}) {
+    console.log(`Secondary email: ${secondaryOnCallEmail}`);
+    console.log(`Primary email: ${primaryOnCallEmail}`);
   if (!statusUsers) {
     return Promise.resolve(null);
   }
@@ -88,14 +106,19 @@ function ensureSlackStatuses({onCallEmail, statusUsers, slackToken,
         if (!statusUsers[id]) {
           return;
         }
-        const isOnCall = statusUsers[id] === onCallEmail;
+        const isOnCall = statusUsers[id] === primaryOnCallEmail || statusUsers[id] === secondaryOnCallEmail;
+        if (isOnCall) {
+          console.log(`${statusUsers[id]} is on call`);
+        }
         if (isOnCall && (profile.status_emoji !== STATUS_EMOJI ||
                          !profile.status_text.startsWith(STATUS_TEXT))) {
           // On call!  Set their status, perhaps saving their current status at
           // the end of the status text.
-          let text = STATUS_TEXT;
+          const isPrimary = statusUsers[id] === primaryOnCallEmail;
+          const primaryOrSecondary = isPrimary ? "(primary)" : "(secondary)"
+          let text = `${STATUS_TEXT} ${primaryOrSecondary}`;
           if (profile.status_emoji !== '' || profile.status_text != '') {
-            text = `${text} ${profile.status_emoji} ${profile.status_text}`;
+            text = `${text} ${profile.status_emoji} ${profile.status_text} ${primaryOrSecondary}`;
           }
           promises.push(
             setProfile({id, emoji: STATUS_EMOJI, text}));
@@ -116,36 +139,38 @@ function ensureSlackStatuses({onCallEmail, statusUsers, slackToken,
     });
 }
 
-function getSlackChannelID({channelName, slackToken}) {
+function getSlackChannelIDs({channelNames, slackToken}) {
   return promisify(slack.channels.list)({token: slackToken})
     .then(data => {
+      let channels = []
       for (var i = 0; i < data.channels.length; i++) {
-        if (data.channels[i].name === channelName) {
-          return data.channels[i].id;
+        if (channelNames.includes(data.channels[i].name)) {
+          channels.push(data.channels[i].id);
         }
       }
-      throw new Error(`Slack channel ${ channelName } not found`);
+      return channels;
+      throw new Error(`No slack channels found for ${ channelNames }`);
     });
 }
 
-function determineSlackChannelIDOrDie({channelName, slackToken}) {
-  return getSlackChannelID({channelName, slackToken})
-    .then(id => {
-      console.log(`Found channel ID ${ id } for #${ channelName }`);
-      return id;
+function determineSlackChannelIDOrDie({channelNames, slackToken}) {
+  return getSlackChannelIDs({channelNames, slackToken})
+    .then(ids => {
+      console.log(`Found channel IDs ${ ids } for #[${ channelNames }]`);
+      return ids;
     })
     .catch(err => {
-      console.error("Could not determine Slack channel ID!");
+      console.error("Could not determine Slack channel IDs!");
       console.error(err);
       process.exit(1);
     });
 }
 
-function ensureSlackTopic({onCallName, channelID, slackToken}) {
+function ensureSlackTopic({primaryOnCallName, secondaryOnCallName, channelID, slackToken}) {
   return promisify(slack.channels.info)({token: slackToken, channel: channelID})
     .then(data => {
       const topic = data.channel.topic.value;
-      const newTopic = `On call: ${ onCallName }`;
+      const newTopic = `Primary: ${ primaryOnCallName }, Secondary: ${ secondaryOnCallName }`;
       if (topic !== newTopic) {
         console.log(`Updating channel topic to ${ newTopic }`);
         return promisify(slack.channels.setTopic)({
@@ -158,4 +183,11 @@ function ensureSlackTopic({onCallName, channelID, slackToken}) {
 }
 
 determineSlackChannelIDOrDie(Meteor.settings.slack)
-  .then(channelID => updateOnCall({channelID, ...Meteor.settings}));
+  .then(channelIDs => {
+    for (var i = 0; i < channelIDs.length; i++) {
+      const channelID = channelIDs[i]
+      console.log("updating on-call")
+      updateOnCall({channelID, ...Meteor.settings});
+    }
+  });
+
