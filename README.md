@@ -8,7 +8,8 @@ Create a settings.json file like:
   "pagerduty": {
     "schedules": [{
       "label": "Primary",
-      "id": "ID"
+      "id": "ID",
+      "slackUserGroupHandle": "oncall-primary"
     }, {
       "label": "Secondary",
       "id": "ID"
@@ -24,12 +25,12 @@ Create a settings.json file like:
       "pattern": "P: @(Primary), S: @(Secondary)"
     }],
     "slackToken": "TOKEN1",
-    "slackAdminToken": "TOKEN2"
+    "slackAdminToken": "TOKEN2",
+    "users": {
+      "glasser@meteor.com": U02FWGZ19"
+    }
   },
-  "intervalMS": 30000,
-  "statusUsers": {
-    "U02FWGZ19": "glasser@meteor.com"
-  },
+  "intervalMS": 30000
 }
 ```
 
@@ -48,6 +49,8 @@ Create a settings.json file like:
     - `channels:read`
     - `channels:write`
     - `users:read`
+    - `usergroups:read`
+    - `usergroups:write`
   - Click "Install App To Team" and select the appropriate team
   - This provides an Access Token. Copy it into the slack.slackToken settings field
   - Now get a Slack team admin to follow the same steps, but with only the
@@ -55,11 +58,13 @@ Create a settings.json file like:
     slack.slackAdminToken. This is used to set the status emoji and text for
     arbitrary users.
 
-Users listed (by Slack ID) in the status section will have their status text and
-emoji set as configured when they are on call, and cleared if they are not on
-call any more and their status starts with 'On call!'.  (If they already have a
-status, it is appended to the 'On call!' status text along with its emoji, and
-restored when they go off call.)
+Users listed (by Slack ID) in the slack.users section will have their status
+text and emoji set as configured when they are on call, and cleared if they are
+not on call any more and their status starts with 'On call!'.  (If they already
+have a status, it is appended to the 'On call!' status text along with its
+emoji, and restored when they go off call.)  The email listed must match the
+email stored in PagerDuty.  They will also be added to any Slack user group
+named in slackUserGroupHandle.
 
 The simplest way to find a Slack ID is to run users.list via
 the [Slack API tester](https://api.slack.com/methods/users.list/test) and find
