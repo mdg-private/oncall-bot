@@ -92,13 +92,7 @@ function logAllOnCall(onCalls) {
 }
 
 function updateOnCall(options) {
-  const {
-    channels,
-    slackUserGroupIDsByHandle,
-    intervalMS,
-    pagerduty,
-    slack
-  } = options;
+  const { channels, intervalMS, pagerduty, slack } = options;
   function repeat() {
     setTimeout(() => updateOnCall(options), intervalMS);
   }
@@ -121,7 +115,6 @@ function updateOnCall(options) {
         .then(() =>
           ensureSlackUserGroups({
             onCalls,
-            slackUserGroupIDsByHandle,
             slackToken: slack.slackToken,
             combinedUserGroupHandle: slack.combinedUserGroupHandle
           })
@@ -140,7 +133,6 @@ const TOPIC_DELIMITER_EMOJI = ":pagerduty:";
 
 function ensureSlackUserGroups({
   onCalls,
-  slackUserGroupIDsByHandle,
   slackToken,
   combinedUserGroupHandle
 }) {
@@ -148,7 +140,13 @@ function ensureSlackUserGroups({
     onCalls = [
       ...onCalls,
       {
+        scheduleLabel: "Combined",
         slackUserGroupHandle: combinedUserGroupHandle,
+        onCallName: onCalls
+          .map(({ onCallName }) => onCallName)
+          .filter(x => x)
+          .sort()
+          .join(", "),
         onCallSlackUserID: onCalls
           .map(({ onCallSlackUserID }) => onCallSlackUserID)
           .filter(x => x)
@@ -157,36 +155,71 @@ function ensureSlackUserGroups({
       }
     ];
   }
-  return Promise.all(
-    onCalls.map(({ slackUserGroupHandle, onCallSlackUserID }) => {
-      if (!slackUserGroupHandle || !onCallSlackUserID) {
-        return;
-      }
-      const slackUserGroupID = slackUserGroupIDsByHandle.get(
-        slackUserGroupHandle
+
+  return promisify(slack.usergroups.list)({ token: slackToken }).then(
+    ({ usergroups }) => {
+      const userGroupInfoByHandle = new Map();
+      usergroups.forEach(({ id, handle, name }) =>
+        userGroupInfoByHandle.set(handle, { name, id })
       );
-      if (!slackUserGroupID) {
-        // Should be guaranteed at startup.
-        return Promise.reject(
-          Error(`Unknown user group handle ${slackUserGroupHandle}`)
-        );
-      }
-      return promisify(slack.usergroups.users.list)({
-        token: slackToken,
-        usergroup: slackUserGroupID
-      }).then(({ users }) => {
-        if (users.join(",") !== onCallSlackUserID) {
-          console.log(
-            `Updating usergroup ${slackUserGroupHandle} to ${onCallSlackUserID}`
-          );
-          return promisify(slack.usergroups.users.update)({
-            token: slackToken,
-            usergroup: slackUserGroupID,
-            users: onCallSlackUserID
-          });
-        }
-      });
-    })
+      return Promise.all(
+        onCalls.map(
+          ({
+            slackUserGroupHandle,
+            onCallName,
+            onCallSlackUserID,
+            scheduleLabel
+          }) => {
+            if (!(slackUserGroupHandle && onCallSlackUserID && onCallName)) {
+              return;
+            }
+            const userGroupInfo = userGroupInfoByHandle.get(
+              slackUserGroupHandle
+            );
+            if (!userGroupInfo) {
+              return Promise.reject(
+                Error(`Unknown user group handle ${slackUserGroupHandle}`)
+              );
+            }
+            const existingName =
+              userGroupInfo.name || `Oncall ${scheduleLabel}`;
+            const existingNamePrefix = existingName.replace(/\s*\(.*/, "");
+            const newName = `${existingNamePrefix} (${onCallName})`;
+            return promisify(slack.usergroups.users.list)({
+              token: slackToken,
+              usergroup: userGroupInfo.id
+            }).then(({ users }) => {
+              const promises = [];
+              if (users.join(",") !== onCallSlackUserID) {
+                console.log(
+                  `Updating usergroup list ${slackUserGroupHandle} to ${onCallName}`
+                );
+                promises.push(
+                  promisify(slack.usergroups.users.update)({
+                    token: slackToken,
+                    usergroup: userGroupInfo.id,
+                    users: onCallSlackUserID
+                  })
+                );
+              }
+              if (newName !== existingName) {
+                console.log(
+                  `Updating usergroup name ${slackUserGroupHandle} to ${onCallName}`
+                );
+                promises.push(
+                  promisify(slack.usergroups.update)({
+                    token: slackToken,
+                    usergroup: userGroupInfo.id,
+                    name: newName
+                  })
+                );
+              }
+              return Promise.all(promises);
+            });
+          }
+        )
+      );
+    }
   );
 }
 
@@ -277,26 +310,6 @@ function determineSlackChannelIDsOrDie({ channels, slackToken }) {
     });
 }
 
-function determineSlackUserGroupIDsOrDie(slackToken, handles) {
-  return promisify(slack.usergroups.list)({ token: slackToken })
-    .then(data => {
-      const slackUserGroupIDsByHandle = new Map();
-      handles.forEach(handle => {
-        const ugFromSlack = data.usergroups.find(ug => ug.handle === handle);
-        if (!ugFromSlack) {
-          throw new Error(`No Slack usergroup found for handle ${handle}`);
-        }
-        slackUserGroupIDsByHandle.set(handle, ugFromSlack.id);
-      });
-      return slackUserGroupIDsByHandle;
-    })
-    .catch(err => {
-      console.error("Could not determine Slack user group IDs!");
-      console.error(err);
-      process.exit(1);
-    });
-}
-
 function ensureSlackTopics({ onCalls, channels, slackToken }) {
   return Promise.all(
     channels.map(channel => ensureSlackTopic({ onCalls, channel, slackToken }))
@@ -337,15 +350,5 @@ function ensureSlackTopic({ onCalls, channel, slackToken }) {
 }
 
 determineSlackChannelIDsOrDie(Meteor.settings.slack).then(channels =>
-  determineSlackUserGroupIDsOrDie(
-    Meteor.settings.slack.slackToken,
-    [
-      Meteor.settings.slack.combinedUserGroupHandle,
-      ...Meteor.settings.pagerduty.schedules.map(
-        ({ slackUserGroupHandle }) => slackUserGroupHandle
-      )
-    ].filter(x => x)
-  ).then(slackUserGroupIDsByHandle =>
-    updateOnCall({ channels, slackUserGroupIDsByHandle, ...Meteor.settings })
-  )
+  updateOnCall({ channels, ...Meteor.settings })
 );
