@@ -12,5 +12,8 @@
     "request": "^2.81.0",
     "request-promise-native": "^1.0.3",
     "slack": "^8.3.0"
+  },
+  "devDependencies": {
+    "prettier": "^1.16.1"
   }
 }
