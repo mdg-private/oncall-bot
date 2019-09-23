@@ -58,7 +58,9 @@ Create a settings.json file like:
   - Now get a Slack team admin to follow the same steps (aside from the signing secret part), but with only the
     permission `users.profile:write`. Put its Access Token into
     slack.slackAdminToken. This is used to set the status emoji and text for
-    arbitrary users.
+    arbitrary users. (Note: if any of the users in slack.users are themselves
+    admins, it appears that this token needs to come from a Primary User, not
+    just an Admin.)
 
 Users listed (by Slack ID) in the slack.users section will have their status
 text and emoji set as configured when they are on call, and cleared if they are

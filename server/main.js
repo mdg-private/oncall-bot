@@ -296,18 +296,18 @@ function updateOnCall(options) {
         slackToken: slack.slackToken
       })
         .then(() =>
+          ensureSlackUserGroups({
+            onCalls,
+            slackToken: slack.slackToken,
+            combinedUserGroupHandle: slack.combinedUserGroupHandle
+          })
+        )
+        .then(() =>
           ensureSlackStatuses({
             onCalls,
             slackUsers: slack.users,
             slackToken: slack.slackToken,
             slackAdminToken: slack.slackAdminToken
-          })
-        )
-        .then(() =>
-          ensureSlackUserGroups({
-            onCalls,
-            slackToken: slack.slackToken,
-            combinedUserGroupHandle: slack.combinedUserGroupHandle
           })
         );
     })
