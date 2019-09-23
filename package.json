@@ -5,13 +5,18 @@
     "start": "meteor run"
   },
   "dependencies": {
-    "babel-runtime": "^6.20.0",
+    "@babel/runtime": "^7.4.2",
+    "babel-runtime": "^6.26.0",
+    "body-parser": "^1.19.0",
+    "crypto": "^1.0.1",
     "es6-promisify": "^5.0.0",
     "meteor-node-stubs": "~0.2.4",
-    "moment": "^2.18.1",
+    "moment": "^2.24.0",
+    "node-fetch": "^2.6.0",
+    "query-string": "^6.8.2",
     "request": "^2.81.0",
-    "request-promise-native": "^1.0.3",
-    "slack": "^8.3.0"
+    "request-promise-native": "^1.0.7",
+    "slack": "^8.4.2"
   },
   "devDependencies": {
     "prettier": "^1.16.1"

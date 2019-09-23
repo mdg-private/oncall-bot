@@ -4,8 +4,11 @@ import moment from "moment";
 import { Meteor } from "meteor/meteor";
 import { check, Match } from "meteor/check";
 import slack from "slack";
+const fetch = require('node-fetch');
+const crypto = require("crypto");
+const bodyParser = require('body-parser');
 
-var lastOnCallName = null;
+const scheduleUsers = {}
 
 console.log("settings", Meteor.settings);
 
@@ -23,6 +26,7 @@ check(
       pagerdutyToken: String
     },
     slack: {
+      signingSecret: String,
       channels: [
         {
           name: String,
@@ -38,6 +42,152 @@ check(
   })
 );
 
+WebApp.connectHandlers.use(bodyParser.urlencoded({extended: false}));
+
+WebApp.connectHandlers.use('/swap-primary-secondary', async (req, res, next) => {
+  async function swapPrimaryAndSecondarySchedules({lengthOfTimeInSeconds}) {
+    const pdSchedules = Meteor.settings.pagerduty.schedules;
+    let primarySchedule, secondarySchedule;
+    pdSchedules.forEach((element) => {
+      if (element.label.trim().toLowerCase() === 'primary') {
+        primarySchedule = element;
+      } else if (element.label.trim().toLowerCase() === 'secondary') {
+        secondarySchedule = element;
+      }
+    });
+
+    if (!primarySchedule && !secondarySchedule) {
+      throw new Error('Could not find primary and secondary schedules');
+    }
+
+    lengthOfTimeInSeconds = lengthOfTimeInSeconds
+      ? getSeconds(lengthOfTimeInSeconds) : 0;
+    if (lengthOfTimeInSeconds == 0) {
+      // Default to 1 hour if time is unspecified or unparseable
+      lengthOfTimeInSeconds = 3600;
+    }
+
+    const primaryUser = scheduleUsers['primary'];
+    const secondaryUser = scheduleUsers['secondary'];
+
+    if (!primaryUser || !secondaryUser) {
+      // TODO: Respond in Slack saying to try again?
+      sendMessageToWebhook({message:'Transient error! Please try again'});
+      throw new Error('Do not know current primary and secondary');
+    }
+
+    await createOverride({
+      scheduleLabel: primarySchedule.label,
+      scheduleID: primarySchedule.id,
+      pagerdutyToken: Meteor.settings.pagerduty.pagerdutyToken,
+      userTakingOverride: secondaryUser,
+      lengthOfTimeInSeconds,
+    });
+
+    await createOverride({
+      scheduleLabel: secondarySchedule.label,
+      scheduleID: secondarySchedule.id,
+      pagerdutyToken: Meteor.settings.pagerduty.pagerdutyToken,
+      userTakingOverride: primaryUser,
+      lengthOfTimeInSeconds,
+    });
+
+    sendMessageToWebhook({message:'Successfully updated on-call schedules :metal2:'});
+
+    doTheLoop();
+  }
+
+  const hmac = crypto.createHmac('sha256', Meteor.settings.slack.signingSecret);
+  const body = req.body;
+  const paramVersion = url = Object.keys(body).map((k) => {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(body[k])
+  }).join('&')
+  // Verify the request comes from Slack
+  const timestampHeader = req.headers['x-slack-request-timestamp'];
+  const concatenatedContent = `v0:${timestampHeader}:${paramVersion}`;
+  hmac.update(concatenatedContent);
+  const hash = 'v0=' + hmac.digest('hex');
+  const sentHash = req.headers['x-slack-signature'];
+  if (hash !== sentHash) {
+    // TODO: Debug hashing (param order?) to verify requests come from Slack
+    console.warn('oops, this might not have come from Slack!');
+  }
+
+  // Handle the request
+  const text = body['text'];
+  let seconds = getSeconds(text);
+  if (seconds === 0) {
+    seconds = 3600;
+  }
+
+  const webhookUrl = body['response_url'];
+  async function sendMessageToWebhook({
+    message,
+    private,
+  }) {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        text: message,
+        response_type: private ? 'ephemeral' : 'in_channel'
+      }),
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }
+
+  const readableDuration = forHumans(seconds);
+  res.write(`Attempting to swap on-call for ${readableDuration}`);
+  res.end();
+
+  await sendMessageToWebhook({
+    message: `On-call swap initiated by <@${body.user_id}> for ${readableDuration}`,
+  });
+
+  try {
+    await swapPrimaryAndSecondarySchedules({lengthOfTimeInSeconds: text.trim()});
+  } catch (err) {
+    // Post back to the channel failure
+    console.warn('Encountered error while trying to swap', err);
+    await sendMessageToWebhook({
+      message: `Hmm, something didn't work quite right. Try again? Check the logs? :man-shrugging:`,
+    });
+  }
+
+  // Post back to the channel success
+  res.end();
+});
+
+// Cribbed from https://stackoverflow.com/questions/8211744/
+function forHumans ( seconds ) {
+  var levels = [
+      [Math.floor(seconds / 31536000), 'years'],
+      [Math.floor((seconds % 31536000) / 86400), 'days'],
+      [Math.floor(((seconds % 31536000) % 86400) / 3600), 'hours'],
+      [Math.floor((((seconds % 31536000) % 86400) % 3600) / 60), 'minutes'],
+      [(((seconds % 31536000) % 86400) % 3600) % 60, 'seconds'],
+  ];
+  var returntext = '';
+
+  for (var i = 0, max = levels.length; i < max; i++) {
+      if ( levels[i][0] === 0 ) continue;
+      returntext += ' ' + levels[i][0] + ' ' + (levels[i][0] === 1 ? levels[i][1].substr(0, levels[i][1].length-1): levels[i][1]);
+  };
+  return returntext.trim();
+}
+
+function getSeconds(str) {
+  let seconds = 0;
+  const days = str.match(/(\d+)\s*d/);
+  const hours = str.match(/(\d+)\s*h/);
+  const minutes = str.match(/(\d+)\s*m/);
+  if (days) { seconds += parseInt(days[1])*86400; }
+  if (hours) { seconds += parseInt(hours[1])*3600; }
+  if (minutes) { seconds += parseInt(minutes[1])*60; }
+  return seconds;
+}
+
 function getAllOnCall(schedules, pagerdutyToken, slackUsers) {
   return Promise.all(
     schedules.map(({ label, id, slackUserGroupHandle }) =>
@@ -50,6 +200,46 @@ function getAllOnCall(schedules, pagerdutyToken, slackUsers) {
       })
     )
   );
+}
+
+async function createOverride({
+  scheduleLabel,
+  scheduleID,
+  pagerdutyToken,
+  userTakingOverride,
+  lengthOfTimeInSeconds,
+}) {
+  const now = new Date();
+  const end = new Date(now.getTime() + lengthOfTimeInSeconds * 1000);
+  const body = {
+    "override": {
+      "start": now.toISOString(),
+      "end": end.toISOString(),
+      "user": {
+        "id": `${userTakingOverride.id}`,
+        "type": "user_reference"
+      }
+    }
+  }
+
+  const url = `https://api.pagerduty.com/schedules/${scheduleID}/overrides`;
+  console.log(JSON.stringify(body));
+  console.log(`overriding ${scheduleLabel} for ${lengthOfTimeInSeconds} seconds with ${userTakingOverride.name}`);
+  return fetch(url, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Token token=${pagerdutyToken}`,
+      Accept: "application/vnd.pagerduty+json;version=2",
+      "Content-Type": "application/json"
+    }
+  }).then(res => res.json())
+  .then(json => {
+    if(json.error) {
+      console.warn(json);
+      throw Error('API call failed');
+    }
+  });
 }
 
 function getSingleOnCall({
@@ -74,6 +264,7 @@ function getSingleOnCall({
     },
     json: true
   }).then(out => {
+    scheduleUsers[scheduleLabel.toLowerCase()] = out.users[0];
     return {
       scheduleLabel,
       slackUserGroupHandle,
@@ -328,9 +519,9 @@ function ensureSlackTopic({ onCalls, channel, slackToken }) {
       // Preserve any part of the topic before :pagerduty:
       const delimiter = topic.indexOf(TOPIC_DELIMITER_EMOJI);
       if (delimiter !== -1) {
-        prefix = topic.substr(0, delimiter).trimEnd() + " ";
-      } else if (topic.trimEnd() !== "") {
-        prefix = topic.trimEnd() + " ";
+        prefix = topic.substr(0, delimiter).trimRight() + " ";
+      } else if (topic.trimRight() !== "") {
+        prefix = topic.trimRight() + " ";
       }
     }
     let newTopic = `${prefix}${TOPIC_DELIMITER_EMOJI} ${pattern}`;
@@ -349,6 +540,10 @@ function ensureSlackTopic({ onCalls, channel, slackToken }) {
   });
 }
 
-determineSlackChannelIDsOrDie(Meteor.settings.slack).then(channels =>
-  updateOnCall({ channels, ...Meteor.settings })
-);
+function doTheLoop() {
+  determineSlackChannelIDsOrDie(Meteor.settings.slack).then(channels =>
+    updateOnCall({ channels, ...Meteor.settings })
+  );
+}
+
+doTheLoop()

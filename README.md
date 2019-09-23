@@ -54,7 +54,8 @@ Create a settings.json file like:
     - `usergroups:write`
   - Click "Install App To Team" and select the appropriate team
   - This provides an Access Token. Copy it into the slack.slackToken settings field
-  - Now get a Slack team admin to follow the same steps, but with only the
+  - Also copy the "signing secret" from the Basic Information page into the slack.signingSecret settings field
+  - Now get a Slack team admin to follow the same steps (aside from the signing secret part), but with only the
     permission `users.profile:write`. Put its Access Token into
     slack.slackAdminToken. This is used to set the status emoji and text for
     arbitrary users.
