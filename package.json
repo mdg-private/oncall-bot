@@ -12,7 +12,7 @@
     "es6-promisify": "^5.0.0",
     "meteor-node-stubs": "~0.2.4",
     "moment": "^2.24.0",
-    "node-fetch": "^2.6.0",
+    "node-fetch": "^2.6.1",
     "query-string": "^6.8.2",
     "request": "^2.81.0",
     "request-promise-native": "^1.0.7",
