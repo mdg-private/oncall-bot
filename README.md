@@ -1,3 +1,9 @@
+# No longer maintained
+
+We no longer use this project, and it no longer works out of the box due to Slack renaming the "channels" APIs to "conversations". It could serve as an idea for how to implement a bot like this, though as the original author I'd advise against copying its code exactly (pre-TypeScript JS written using lots of Promises but no async/await).
+
+# Old README
+
 This bot maintains a single Slack channel's topic to contain the name of the
 level-1 on-call user for a given PagerDuty schedule ID.
 
